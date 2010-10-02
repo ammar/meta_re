@@ -1,0 +1,99 @@
+= MetaRegexp
+
+An experimental regular expression "preprocessor" that parses and then
+recompiles regular expressions to accomplish the following:
+
+* Expansion: expand repeated grouped expressions to enable repeated
+  captures without manually duplicating patterns.
+
+* Aliases: recognizes and substitutes registered regular expression
+  aliases at any depth (aliases can contain aliases), including the
+  expansion of any grouped expressions within.
+
+
+== Repetition Expansion
+
+With repetition expansion the following regular expression:
+
+  /([a-z]+){1,3}/
+
+becomes:
+
+  /([a-z]+)([a-z]+)?([a-z]+)?/
+
+If the first regex matches, only the last match is captured, while
+with the second regex all matches will be captured. Note how the
+last two instances of the original pattern are marked as optional
+with the zero-or-more meta character '?'
+
+This type of expansion is usually done 'manually' by typing patterns
+multiple times. In addition to not being DRY, it makes the expressions
+harder to read.
+
+== Comparison
+Here's an example for matching HTML tags, somewhat simplified to keep it
+simple. Here's the text we wish to match:
+
+  tag = "<input type=\"text\" value=\"hello\" id=\"body\" onclick=\"alert('Test');\" />"
+
+And here is the regular expression:
+
+  pattern = '<([a-z]+)\s+(([a-z]+)="([^"]+)"\s*){1,8}\s*/>'
+
+First with stdlib's Regexp:
+
+  re = Regexp.new pattern
+  md = re.match tag
+
+The match data looks like:
+
+  ["<input type=\"text\" value=\"hello\" id=\"body\" onclick=\"alert('Test');\" />",
+   "input", "onclick=\"alert('Test');\" ", "onclick", "alert('Test');"]
+
+Now with MetaRegexp:
+
+  re = MetaRegexp.new pattern
+  md = re.match tag
+
+Now the match data looks like:
+
+  ["<input type=\"text\" value=\"hello\" id=\"body\" onclick=\"alert('Test');\" />",
+   "input", "type=\"text\" ", "type", "text",
+   "value=\"hello\" ", "value", "hello",
+   "id=\"body\" ", "id", "body",
+   "onclick=\"alert('Test');\" ", "onclick", "alert('Test');",
+   nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil]
+
+The nils that appear at the end are from the possible matches that did not occur. Please
+see the MatchData class in MetaRegexp for more info.
+
+
+== Aliases
+
+Here the term alias is in the vain for bash, not ruby. Here's a simple example
+of what this does/looks like:
+
+  MetaRegexp.alias :name,      /[a-z][-a-z0-9_]+/
+  MetaRegexp.alias :scheme,    /https?|ftps?/
+  MetaRegexp.alias :tld,       'com|net|org|edu'
+  MetaRegexp.alias :domain,    /((?:(@name)\.)+(@tld))/
+  MetaRegexp.alias :uri,       '@scheme://@domain'
+
+  re = MetaRegexp.new '@uri' 
+
+This is usually done with constants and string concatination, but only for one
+level of depth. This feature can be used to build more granural "libraries" of
+reusable patterns.
+
+
+=== Notes
+As mentioned above, this is all experimental, and I wouldn't be surprised if
+some though this is "pure evil".
+
+Currently a full copy of match data is made in a couple of methods. For very
+large texts this can be quite expensive, especially with heavily repeated
+expressions. This needs further investigation.
+
+By the way, why is $~ locally scoped? It does make sense, I guess, but the name
+is very misleading. Is this another perl/pcre tradition inherited by ruby?
+
