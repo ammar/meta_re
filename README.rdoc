@@ -24,7 +24,7 @@ becomes:
 If the first regex matches, only the last match is captured, while
 with the second regex all matches will be captured. Note how the
 last two instances of the original pattern are marked as optional
-with the zero-or-more meta character '?'
+with the zero-or-one meta character '?'
 
 This type of expansion is usually done 'manually' by typing patterns
 multiple times. In addition to not being DRY, it makes the expressions
