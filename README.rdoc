@@ -1,5 +1,9 @@
 = MetaRegexp
 
+ This project is incomplete and has been superceded by regexp_parser. The ideas here will be revisted after the standalone parser has been completed.
+
+== What is it
+
 An experimental regular expression "preprocessor" that parses and then
 recompiles regular expressions to accomplish the following:
 
