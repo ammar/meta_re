@@ -1,7 +1,9 @@
 = MetaRegexp
 
- This project is incomplete and has been superceded by regexp_parser.
- The ideas here will be revisted after the standalone parser has been completed.
+ This project has been superceded by regexp_parser. The main functionality described
+ below works, but there are a few missing things, like proper handling of some escape
+ sequences, and possible others. The ideas presented here will be revisted after the
+ standalone parser has been completed.
 
 == What is it
 
