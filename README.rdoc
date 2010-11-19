@@ -1,106 +1,182 @@
 = MetaRegexp
 
- This project has been superceded by regexp_parser. The main functionality described
- below works, but there are a few missing things, like proper handling of some escape
- sequences, and possible others. The ideas presented here will be revisted after the
- standalone parser has been completed.
+ This project has been revived and rewriten using regexp_parser, now that its
+ scanner and lexer are fairly stable and usable. All functionality described
+ below works fully.
+ 
+ Note, however, since regexp_parser has not been published as a gem yet, using
+ meta_re requires regexp_parser to be downloaded, and included or installed into
+ the load path. Once regexp_parser gets released as a gem, so will this.
 
 == What is it
+A regular expression "pre-processor" that performs the  following
+transformations:
 
-An experimental regular expression "preprocessor" that parses and then
-recompiles regular expressions to accomplish the following:
+* Repetition Expansion: expands repeated grouped expressions to enable
+  repeated captures, without manual duplication.
 
-* Expansion: expand repeated grouped expressions to enable repeated
-  captures without manually duplicating patterns.
+* Aliases: recognizes and substitutes registered regular expression aliases
+  at any depth (i.e. aliases can contain aliases), including the expansion
+  of any grouped expressions within them.
 
-* Aliases: recognizes and substitutes registered regular expression
-  aliases at any depth (aliases can contain aliases), including the
-  expansion of any grouped expressions within.
+The following sections cover these transformations in more detail.
 
 
 == Repetition Expansion
+Using the built-in Regexp class a regular expression that contains repeated
+(i.e. quantified) capturing groups only gets its last match captured into the
+resulting MatchData. For example, given the following pattern and input text:
 
-With repetition expansion the following regular expression:
+  regex = /([a-z]+\s?){1,3}/
+  input  = "one two three"
+
+The built-in Regexp class produces:
+
+  Regexp.new( regex ).match( input ).captures
+  #=> ["three"]
+
+With MetaRexgep's repetition expansion, the same expression captures all the
+grouped expressions in the MatchData:
+
+  MetaRegexp.new( regex ).match( input ).captures
+  #=> ["one ", "two ", "three"]
+
+
+The example above is very simple (the same can be done with scan /\w+/) but it
+was purposefully chosen to quickly illustrate the benefit of expansion. A more
+elaborate example is presented below.
+
+
+== How Expansion Works
+Expansion is accomplished by parsing the given expression, string or Regexp
+object, collecting information about the grouped expressions within it and
+their minimum and maximu repetitions into a "tree" structure. This is then
+recompiled into a new string that is used to create a new Regexp object.
+
+So, given the following regular expression:
 
   /([a-z]+){1,3}/
 
-becomes:
+MetaRegexp transforms it into the following:
 
   /([a-z]+)([a-z]+)?([a-z]+)?/
 
-If the first regex matches, only the last match is captured, while
-with the second regex all matches will be captured. Note how the
-last two instances of the original pattern are marked as optional
-with the zero-or-one meta character '?'
+Now the pattern contains actual groups that will be captured during the
+matching process. Note how the last two instances of the original pattern
+are marked as optional matches with the zero-or-one meta character '?'. The
+minimum is one (required) and the maximum is 3, i.e the last two matches
+are optional.
 
-This type of expansion is usually done 'manually' by typing patterns
-multiple times. In addition to not being DRY, it makes the expressions
-harder to read.
+This type of expansion is usually done 'manually' by interpolating or typing
+the desired capture patterns multiple times. In addition to not being DRY, 
+this approach makes the resulting expressions harder to edit and read.
 
-== Comparison
-Here's an example for matching HTML tags, somewhat simplified to keep it
-simple. Here's the text we wish to match:
 
-  tag = "<input type=\"text\" value=\"hello\" id=\"body\" onclick=\"alert('Test');\" />"
+== An Example
+Here's a  more elaborate example, this time for matching HTML tags. It is
+somewhat simplified in terms of the tag and attribute names to make it eaiser
+to follow.
 
-And here is the regular expression:
+Given the following input and regular expression:
 
-  pattern = '<([a-z]+)\s+(([a-z]+)="([^"]+)"\s*){1,8}\s*/>'
+  # input text
+  tag = '<input type="text" value="hello" id="body" onclick="click_text();" />'
 
-First with stdlib's Regexp:
+  # regular expression
+  rex = /<[a-z]+\s+(([a-z]+)="([^"]+)"\s*){1,8}\s*\/>/
 
-  re = Regexp.new pattern
-  md = re.match tag
+With Regexp:
 
-The match data looks like:
+  Regexp.new( rex ).match( tag ).captures
 
-  ["<input type=\"text\" value=\"hello\" id=\"body\" onclick=\"alert('Test');\" />",
-   "input", "onclick=\"alert('Test');\" ", "onclick", "alert('Test');"]
+  # captures
+  ["onclick=\"click_text();\" ", "onclick", "click_text();"]
 
 Now with MetaRegexp:
 
-  re = MetaRegexp.new pattern
-  md = re.match tag
+  MetaRegexp.new( rex ).match( tag ).captures
 
-Now the match data looks like:
+  # captures, formatted for readability:
+  [
+    "type=\"text\" ", "type", "text",
+    "value=\"hello\" ", "value", "hello",
+    "id=\"body\" ", "id", "body",
+    "onclick=\"click_text();\" ", "onclick", "click_text();",
+    nil, nil, nil,
+    nil, nil, nil,
+    nil, nil, nil,
+    nil, nil, nil
+  ]
 
-  ["<input type=\"text\" value=\"hello\" id=\"body\" onclick=\"alert('Test');\" />",
-   "input", "type=\"text\" ", "type", "text",
-   "value=\"hello\" ", "value", "hello",
-   "id=\"body\" ", "id", "body",
-   "onclick=\"alert('Test');\" ", "onclick", "alert('Test');",
-   nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil]
+The nil values that appear at the end are for possible matches that did not
+occur. See the following notes for more on this.
 
-The nils that appear at the end are from the possible matches that did not occur. Please
-see the MatchData class in MetaRegexp for more info.
+=== Notes
+  * The "or more" quantifiers, zero or more (*), and one or more (+) use a
+    default value of 12 for the maximum number of repetitions. A different
+    value can be specified as the second argument to #new of MetaRegexp.
+
+  * To avoid over expansion with * and +, use the interval (or range)
+    quantifier ({min,max}) for repeating groups.
+
+  * Only greedy quantifiers are supported and tested so far.
+
+  * Possible matches that do not occur appear as nil values in the captures
+    array. See the MatchData class in meta_re.rb for more info and ways to
+    deal with these.
 
 
 == Aliases
+Aliases are like macros, a way to define named regular expression patterns that
+can be used on their own or within larger patterns. 
 
-Here the term alias is in the vain for bash, not ruby. Here's a simple example
-of what this does/looks like:
+This type of pattern reuse is usually done with constants and simple string
+concatination, but it is only effective for one level of depth. With MetaRegexp
+aliases, new aliases can be defined in terms of other aliases.  This allows for
+building more granural "libraries" of reusable patterns.
+
+
+== Aliasing Example
+Aliasing is off by default. It can be enabled with:
+
+  MetaRegexp.aliasing true
+
+Next define some aliases, smaller patterns are used to build larger patterns:
 
   MetaRegexp.alias :name,      /[a-z][-a-z0-9_]+/
   MetaRegexp.alias :scheme,    /https?|ftps?/
   MetaRegexp.alias :tld,       'com|net|org|edu'
-  MetaRegexp.alias :domain,    /((?:(@name)\.)+(@tld))/
+  MetaRegexp.alias :domain,    /((?:(@name)\.){1,4}(@tld))/
   MetaRegexp.alias :uri,       '@scheme://@domain'
 
-  re = MetaRegexp.new '@uri' 
+To use an alias, prepend its name with an at sign (@):
 
-This is usually done with constants and string concatination, but only for one
-level of depth. This feature can be used to build more granural "libraries" of
-reusable patterns.
+  >> MetaRegexp.new /@domain/
+  => /((?:([a-z][-a-z0-9_]+)\.)(?:([a-z][-a-z0-9_]+)\.)?(?:([a-z][-a-z0-9_]+)
+     \.)?(?:([a-z][-a-z0-9_]+)\.)?(com|net|org|edu))/
+
+  >> MetaRegexp.new '@uri' 
+  => /(?:https?|ftps?):\/\/(?:((?:([a-z][-a-z0-9_]+)\.)(?:([a-z][-a-z0-9_]+)
+     \.)?(?:([a-z][-a-z0-9_]+)\.)?(?:([a-z][-a-z0-9_]+)\.)?(com|net|org|edu)))/
 
 
-=== Notes
-As mentioned above, this is all experimental, and I wouldn't be surprised if
-some though this is "pure evil".
+=== Naming Alias Captures
+In addition to the normal alias resolution, where aliases are replaced with
+their defined values as is, they can also be wrapped with named groups that
+use the same name as the alias. To enable named alias groups use:
 
-Currently a full copy of match data is made in a couple of methods. For very
-large texts this can be quite expensive, especially with heavily repeated
-expressions. This needs further investigation.
+  MetaRegexp.name_groups true
 
-By the way, why is $~ locally scoped? It does make sense, I guess, but the name
-is very misleading. Is this another perl/pcre tradition inherited by ruby?
+  >> MR.new '@scheme'
+  => /(?<scheme>https?|ftps?)/
 
+Now matches for that alias can be accessed by name from the match data.
+
+=== Known Probelm
+Aliases that contain repetitions will result in multiple groups having the same
+name. Obviously these matches will overwrite one another on the captures list.
+This will be corrected in a future version.
+
+
+== Copyright
+Copyright (c) 2010 Ammar Ali. See LICENSE file for details.

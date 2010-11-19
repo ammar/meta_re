@@ -1,2 +1,6 @@
+.*.swp
+.yardoc
 doc
+i.rb
 sandbox
+rt

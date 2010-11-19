@@ -13,40 +13,46 @@ class TestMetaRegexp < Test::Unit::TestCase
 
   def test_parse_passes_non_quantified_groups_as_is
     re = MetaRegexp.new(/(groups) (without) (quantifiers)/)
-    assert_equal('(?-mix:(groups) (without) (quantifiers))', re.source)
+    assert_equal('(groups) (without) (quantifiers)', re.source)
   end
 
   # ?: pass thru
   def test_parse_passes_optional_groups_as_is
     re = MetaRegexp.new(/ruby (has)? many (gems)?/)
-    assert_equal('(?-mix:ruby (has)? many (gems)?)', re.source)
+    assert_equal('ruby (has)? many (gems)?', re.source)
+  end
+
+  # []: pass thru
+  def test_parse_passes_character_classes_thru
+    re = MetaRegexp.new('([)\](]){1,2}')
+    assert_equal('([)\](])([)\](])?', re.source)
   end
 
   # *: default 'more' count
   def test_parse_star_quantifier
     re = MetaRegexp.new(/does (this)* work/mi)
-    assert_equal('(?mi-x:does (this)?(this)?(this)?(this)?(this)?(this)?' +
-                 '(this)?(this)?(this)?(this)?(this)?(this)? work)',
+    assert_equal('does (this)?(this)?(this)?(this)?(this)?(this)?' +
+                 '(this)?(this)?(this)?(this)?(this)?(this)? work',
                  re.source)
   end
 
   # *: override 'more' count
   def test_parse_star_quantifier_with_max_more
     re = MetaRegexp.new(/does (this)* work/mi, 2)
-    assert_equal('(?mi-x:does (this)?(this)? work)', re.source)
+    assert_equal('does (this)?(this)? work', re.source)
   end
 
   # +: default 'more' count
   def test_parse_plus_quantifier
     re = MetaRegexp.new(/does (this)+ work/xi)
-    assert_equal('(?ix-m:does (this)(this)?(this)?(this)?(this)?(this)?' +
-                 '(this)?(this)?(this)?(this)?(this)?(this)? work)', re.source)
+    assert_equal('does (this)(this)?(this)?(this)?(this)?(this)?' +
+                 '(this)?(this)?(this)?(this)?(this)?(this)? work', re.source)
   end
 
   # +: override 'more' count
   def test_parse_plus_quantifier_with_more_max
     re = MetaRegexp.new(/does (this)+ work/i, 2)
-    assert_equal('(?i-mx:does (this)(this)? work)', re.source)
+    assert_equal('does (this)(this)? work', re.source)
   end
 
   # {m,M}: min and max
@@ -55,7 +61,7 @@ class TestMetaRegexp < Test::Unit::TestCase
     ts = "read again, and again, and again, and again"
 
     assert_equal('(?-mix:read (again(, and)?)(again(, and)?)?' +
-                 '(again(, and)?)?(again(, and)?)?)', re.source)
+                 '(again(, and)?)?(again(, and)?)?)', re.to_s)
   end
 
   # {N}: exact count repetition
@@ -63,8 +69,8 @@ class TestMetaRegexp < Test::Unit::TestCase
     re = MetaRegexp.new(/read (again(, and)?){4}/)
     ts = "read again, and again, and again, and again"
 
-    assert_equal('(?-mix:read (again(, and)?)(again(, and)?)' +
-                 '(again(, and)?)(again(, and)?))', re.source)
+    assert_equal('read (again(, and)?)(again(, and)?)' +
+                 '(again(, and)?)(again(, and)?)', re.source)
   end
 
   # {,M}: max only (min = 0)
@@ -77,30 +83,11 @@ class TestMetaRegexp < Test::Unit::TestCase
   end
 
 
-
-  # Parse errors
-  # --------------------------------------------------------------------------
-
-  def test_parse_premature_end_raises_error
-    assert_raise( RuntimeError ) { MetaRegexp.new('(a(b(c))') }
+  # +?: reluctant one or more
+  def test_parse_reluctant_plus_quantifier_with_more_max
+    re = MetaRegexp.new(/does (this)+? work/i, 2)
+    assert_equal('does (this)(this)? work', re.source)
   end
-
-  def test_parse_premature_quantifier_end_raises_error
-    assert_raise( RuntimeError ) { MetaRegexp.new('(a(b){2,)') }
-  end
-
-  # TODO: figure out what is really happening with empty {} in ::Regexp.
-  # It seems that it is allowed, but makes its quantified unmatchable? A
-  # zero-or-zero match? For now, stdlib Regexp allows empty {}, so let it
-  # through.
-  def test_parse_empty_range_quantifier_does_not_raise_error
-    re = nil
-    assert_nothing_raised( RuntimeError ) { 
-      re = MetaRegexp.new('(range(is(empty){}))')
-    }
-    assert_equal('(range(is(empty)))', re.source)
-  end
-
 
 
   # Compatibility with the standard Regexp
@@ -141,9 +128,11 @@ class TestMetaRegexp < Test::Unit::TestCase
   # --------------------------------------------------------------------------
 
   def test_filter_compacts_by_default
-    re = MetaRegexp.new(/^((two|four)\s+legs\s+(bad|good)(?:, |\.)?)+$/i)
-    md = re.match("Four legs good, two legs bad.")
+    re = MetaRegexp.new(
+      (/^((two|four)\s+legs\s+(bad|good)(?:, |\.)?)+$/i).to_s
+    )
 
+    md = re.match("Four legs good, two legs bad.")
     assert(md.filter.any?{|m| not m.nil?}, "filter should compact by default")
   end
 

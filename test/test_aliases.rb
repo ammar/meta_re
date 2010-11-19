@@ -44,57 +44,61 @@ class TestMetaRegexp < Test::Unit::TestCase
 
   # state
   def test_00_aliasing_is_off_by_default
-    state = MetaRegexp.aliasing?
-    assert_equal(false, state)
+    assert_equal(false, MetaRegexp.aliasing?)
   end
 
   def test_01_aliases_pass_thru_when_aliasing_is_off
-    re = MetaRegexp.new '@test (@test (@test))'
-    assert_equal('(?-mix:@test (@test (@test)))', re.to_s)
+    re = MetaRegexp.new '@test (@test) (@test)'
+    assert_equal('@test (@test) (@test)', re.source)
   end
 
   def test_02_aliasing_gets_enabled_when_set_to_true
     MetaRegexp.aliasing true
 
-    re = MetaRegexp.new '@test (@test (@test))'
-    assert_equal('(?-mix:RUBY (RUBY (RUBY)))', re.to_s)
+    re = MetaRegexp.new '@test (@test) (@test)'
+    assert_equal('RUBY (RUBY) (RUBY)', re.source)
   end
 
   def test_03_aliasing_gets_disabled_when_set_to_false
     MetaRegexp.aliasing false
 
-    re = MetaRegexp.new '@test (@test (@test))'
-    assert_equal('(?-mix:@test (@test (@test)))', re.to_s)
+    re = MetaRegexp.new '@test (@test) (@test)'
+    assert_equal('@test (@test) (@test)', re.source)
   end
 
   def test_04_aliasing_gets_enabled_again # for the tests below
     MetaRegexp.aliasing true
 
-    re = MetaRegexp.new '@test (@test (@test))'
-    assert_equal('(?-mix:RUBY (RUBY (RUBY)))', re.to_s)
+    re = MetaRegexp.new '@test (@test) (@test))'
+    assert_equal('RUBY (RUBY) (RUBY)', re.source)
   end
 
 
   # parsing
   def test_unregistered_aliases_pass_thru_as_is
-    re = MetaRegexp.new '@one (@unknown (@alias))'
-    assert_equal('(?-mix:@one (@unknown (@alias)))', re.to_s)
+    re = MetaRegexp.new '@some (@unknown (@aliases))'
+    assert_equal('@some (@unknown (@aliases))', re.source)
   end
 
   def test_escaped_at_sign_passes_thru
-    re = MetaRegexp.new '\@test (@test (\@test))'
-    assert_equal('(?-mix:\@test (RUBY (\@test)))', re.to_s)
+    re = MetaRegexp.new '@test (\@test) (@test)'
+    assert_equal('RUBY (\@test) (RUBY)', re.source)
+  end
+
+  def test_escaped_at_sign_followed_by_defined_alias_passes_thru
+    re = MetaRegexp.new 'mailto: user\@domain.net'
+    assert_equal('mailto: user\@domain.net', re.source)
   end
 
 
   # substitution
   def test_registered_aliases_get_substituted
-    re = MetaRegexp.new 'http://@domain/@directory/@content'
+    re = MetaRegexp.new /http:\/\/@domain\/@directory\/@content/
     assert_equal('(?-mix:http:\\/\\/([a-z]+).([a-z]+).([a-z]+)\\/(\\/?' +
                  '([a-z]+))\\/((.+)\\.(.+)$))', re.to_s)
   end
 
-  def test_substitution_detects_circular_references
+  def test_parser_detects_circular_references
     assert_raise( ArgumentError ) { MetaRegexp.new('(@var)=(@val)') }
   end
 
@@ -107,6 +111,19 @@ class TestMetaRegexp < Test::Unit::TestCase
 
     assert_equal(["http", "n1", "n2", "tld", "n3", "n4", "file", "svg",
                   "a5", "val1", "a6", "val2"], filtered)
+  end
+
+  if RUBY_VERSION >= '1.9'
+    def test_names_alias_groups_when_enabled
+      MetaRegexp.name_groups true
+      re = MetaRegexp.new '@test (@test) (@test)'
+      assert_equal('(?-mix:(?<test>RUBY) ((?<test>RUBY)) ((?<test>RUBY)))', re.to_s)
+      MetaRegexp.name_groups false
+    end
+  else
+    def test_setting_group_naming_raises_error_when_not_1_9
+      assert_raise( RuntimeError ) { MetaRegexp.name_groups(true) }
+    end
   end
 
 end

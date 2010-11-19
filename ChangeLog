@@ -1,0 +1,16 @@
+Fri, Nov 19, 2010 at 10:42 PM  Ammar Ali <ammarabuali@gmail.com>
+
+  * Rewrote using regexp_parser, which fixed all the shortcomings
+    of the initial version (handling escapes, properties, etc.)
+
+  * Added optional group naming to alias relsolution.
+
+Sat, Oct 2, 2010 at 7:04 PM  Ammar Ali <ammarabuali@gmail.com>
+
+  * Completed first working version, post request for feedback on
+    ruby-talk.
+
+Fri, Oct 2, 2010 at 2:36 PM  Ammar Ali <ammarabuali@gmail.com>
+
+  * Started working on the idea
+

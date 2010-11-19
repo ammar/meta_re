@@ -1,18 +1,8 @@
-# MetaRegexp
-#
-# Author: Ammar Ali
-# Requires: Ruby '1.8.6'..'1.9.2' (at least that's what it was tested with)
-# Copyright (c) 2010 Ammar Ali. Released under the same license as Ruby.
-#
-# This software is provided "as is" and without any express or implied
-# warranties, including, without limitation, the implied warranties of
-# merchantibility and fitness for a particular purpose.
-
-
-require 'delegate'   # Used the extended MatchData class
-require 'enumerator' # Work around for a strange "undefined each_slice method
-                     # for Array" error that only seems to occur when being
-                     # executed from within test/unit.
+require 'regexp_parser' # For the regexp lexer that this depends on
+require 'delegate'      # Used the extended MatchData class
+require 'enumerator'    # Work around for a strange "undefined each_slice method
+                        # for Array" error that only seems to occur when being
+                        # executed from within test/unit.
 
 module MetaRegexp
   # For * (zero or more) and + (one or more) we need to define a default count
@@ -21,16 +11,17 @@ module MetaRegexp
   # even better, use the {m,M} notation.
   DEFAULT_MORE_MAX = 12
 
-  # A descendant of stdlib's Regexp that wraps the calls to parse and compile
-  # in its initialize method. match is overloaded to return the extended class
-  # for MatchData
+  # A descendant of the built-in Regexp that wraps it with calls to parse and
+  # compile to perform the expansion and alias resolution in its initialize
+  # method. #match is overloaded to return the extended class for MatchData.
   class Regexp < ::Regexp
-    def initialize(input, more_max = DEFAULT_MORE_MAX)
-      # Using Regexp #to_s instead of #source. Gets the regex string with all
-      # options (m, i, and x). Both could be useful, maybe this should be an
-      # option?
-      parse_tree = MetaRegexp.parse(input.to_s.dup) # dup, it gets 'sliced'
-      super( MetaRegexp.compile(parse_tree, more_max) )
+    def initialize(re, more_max = DEFAULT_MORE_MAX)
+      # If the input is a Regexp object, the lexer (actually the scanner) uses
+      # #source on it, which gets its string representation without any of the
+      # options (m, i, and x). To include the options, #to_s should be called
+      # on the object before passing it to MetaRegexp.new.
+      tree = MetaRegexp.parse(Regexp::Lexer.scan(re, "ruby/#{RUBY_VERSION}"))
+      super( MetaRegexp.compile(tree, more_max) )
     end
 
     # Override to return an instance of the extended MatchData
@@ -90,7 +81,8 @@ module MetaRegexp
     # the order of matches will be fixed and predictable, with the deepest
     # nested patterns appearing after shallower ones. This characteristic can
     # be taken advantage of to select matches of interest by skipping a fixed
-    # number of matches (possibly zero) before and/or after the wanted ones.
+    # number of matches (possibly zero) before and/or after the matches of
+    # interest.
     #
     # This method does just that. Instead of taking a list of fixed indexes,
     # it takes before and after counts to be skipped.
@@ -100,7 +92,7 @@ module MetaRegexp
     #   re = MetaRegexp.new /((ca(b|ll|n|t))\s*)+./
     #   matches = re.match("can cat call cab")
     #
-    #   # skip 1 before and 1 after every match
+    #   # skip 1 before and 1 after every capture
     #   selected = matches.skip(1, 1)
     #   => ["can", "cat", "call", "cab"]
     #
@@ -126,231 +118,166 @@ module MetaRegexp
 
   private
 
-  # characters that the parser 'acts' on
-  PARSE_CHARS = ['\\', '(', ')', '@'].freeze
+  GROUP_TOKENS  = [:capture, :passive, :atomic, :options]
+  ZERO_OR_ONE   = [:zero_or_one, :zero_or_one_reluctant, :zero_or_one_possessive]
+  ZERO_OR_MORE  = [:zero_or_more, :zero_or_more_reluctant, :zero_or_more_possessive]
+  ONE_OR_MORE   = [:one_or_more, :one_or_more_reluctant, :one_or_more_possessive]
+  INTERVAL      = [:interval, :interval_reluctant, :interval_possessive]
 
-  # characters allowed in alias names
-  ALIAS_CHARS = (('a'..'z').to_a + ('0'..'9').to_a + ['_']).flatten.freeze
 
-  # A simple recursive descent parser that identifies and collects any grouped
-  # expressions and their quantifiers into an "expression tree", that is later
-  # given to the compile method to produce a new expanded regular expression
-  # string that can be passed to stdlib's Regexp.
+  # Parses and collects any grouped expressions and their quantifiers into an
+  # "expression tree", that gets passed to the compile method to produce a new
+  # expanded regular expression string that can be used to create a new Regexp.
   #
-  # The only characters this parser cares about are the paranthesis, and if
-  # present, the characters *, +, {, and }, but only if they occur immediately
-  # after the grouped pattern. All other characters, including escaped versions
-  # of *, + , { and }, are passed through as is.
-  def self.parse(input, at_depth = 0)
-    groups = []
-    in_group = (at_depth == 0 ? false : true)
+  # The only tokens this parser cares about are the capturing group open tokens
+  # (:capture, :passive, and :atomic), their balancing close tokens (:close),
+  # and if present, the quantifiers, but only if they occur immediately after
+  # a grouped pattern. If aliasing is enabled, all defined aliases, preceded by
+  # the at sign '@' are resolved. All other tokens, are copied as is to the
+  # output tree (pass thru)
+  def self.parse(tokens, d = 0)
+    tree = []
+    in_group = (d == 0 ? false : true)
 
-    while input[0] and (rc = input.slice!(/./)) do
-      if rc == '\\'
-        groups << { :c => (rc + (input[0] ? input.slice!(/./) : '')) }
-        next
+    while tokens[0] and (t = tokens.slice!(0))
+      if t.type == :group and GROUP_TOKENS.include?(t.token)
+        group = { :open => t.text, :group => self.parse(tokens, d+1) }
+        tree << quantify(tokens, group)
 
-      elsif rc == '('
-        group = { :g => self.parse(input, at_depth+1) }
-        groups << self.quantify(input, group) 
-        next
-
-      elsif rc == ')'
-        raise "#{self.name}: unexpected end of pattern group at '#{rc}'." if
-          not in_group
-
+      elsif t.type == :group and t.token == :close
         in_group = false
         break
 
-      elsif rc == '@' and self.aliasing?
-        groups << { :a => self._alias(input) }
+      elsif self.aliasing? and t.type == :literal and t.text.include?('@')
+        aa = t.text.scan(/@\w+|[^@]+/)
+        aa.each_with_index do |s, i|
+          if s[0].chr == '@' and self.alias(s[1..-1])
+            tree << {
+              :name  => s[1..-1],
+              :alias => self.resolve(s[1..-1]),
+            }
+          else
+            tree << { :copy => [s] }
+          end
+        end
 
       else
-        exp = rc
-        while input[0] and not PARSE_CHARS.include?(input[0].chr) do
-          exp << input.slice!(/./)
+        copy = [t.text]
+        while tokens[0] and not tokens[0].type == :group and not
+          tokens[0].text.include?('@')
+            copy << tokens.slice!(0).text
         end
-        groups << { :c => exp }
+        tree << { :copy => copy }
       end
-    end
-
-    if in_group == true
-      raise "#{self.name}: premature end of grouped pattern."
-    end
-
-    groups
+    end; tree
   end
 
-  # This is where most of the work gets done. This method gets called for
-  # every grouped pattern encountered by parse. Checks for and reads any
-  # quantifier(s) following the given group, adding their values to the group
-  # metadata (a Hash) in the tree. The values parsed by this method determine
-  # the count a certain grouped pattern will be "emitted" during compilation,
-  # and how many of those times are "required" (minimum matches) vs how many
-  # are "optional" (maximum matches).
-  #
-  # The quantifiers that are recognized and parsed are *, +, and repetition
-  # range {m,M}. There's nothing useful that can be done with the  zero or
-  # one quantifier (?) so it is ignored.
-  #
-  # For ranged repetition, exact counts {N}, maximum only {,M} (min = *),
-  # and full range {m,M} notations as supported.
-  def self.quantify(input, group)
-    return group unless input[0] and ['*', '+', '{'].include?(input[0].chr)
-
-    have_min = false
-    have_max = false
-
-    read_start = false
-    read_end = false
-    read_len = 0
-
-    while rc = input.slice!(/./) do
-      read_len += 1
-
-      if rc == '{'
-        read_start = true
-        next
-
-      elsif rc == '}'
-        if read_len == 0
-          { :c => '{}' } # empty. put it back, Regexp allows it!
+  # Called after every parsed group to check for and set min and max repetitions
+  # for the group. This data is used by the compiler to generate the expanded
+  # regular expression.
+  def self.quantify(tokens, group)
+    if tokens[0] and tokens[0].type == :quantifier
+      t = tokens.slice!(0)
+      case t.token
+      when *ZERO_OR_ONE
+        group[:min], group[:max] = 0, 1
+      when *ZERO_OR_MORE
+        group[:min], group[:max] = 0, :more
+      when *ONE_OR_MORE
+        group[:min], group[:max] = 1, :more
+      when *INTERVAL
+        case t.text
+        when /\{(\d+),(\d+)\}/
+          group[:min], group[:max] = $1.to_i, $2.to_i
+        when /\{(\d+)\}/
+          group[:min], group[:max] = $1.to_i, nil
+        when /\{(\d+),\}/
+          group[:min], group[:max] = $1.to_i, :more
+        when /\{,(\d+)\}/
+          group[:min], group[:max] = 0, $1.to_i
         end
-
-        read_end = true
-        break
-
-      elsif rc == '+'
-        group[:m] = 1
-        group[:M] = :plus
-
-        read_end = true
-        break
-
-      elsif rc == '*'
-        group[:m] = 0
-        group[:M] = :star
-
-        read_end = true
-        break
-
-      elsif rc =~ /^[0-9]$/
-        value = rc
-
-        while input[0] and
-          (input[0].chr =~ /[0-9]/) and
-          (i = input.slice!(/./)) do
-            value << i
-            read_len += 1
-        end
-
-        if have_min
-          group[:M] = value.to_i;
-          have_max  = true
-        else
-          group[:m] = value.to_i;
-          have_min  = true
-        end
-
-      elsif rc == ','
-        unless have_min
-          group[:m] = 0
-          have_min  = true
-        end
-        next
-
-      elsif rc =~ /\s/
-        next
-
-      else
-        raise "#{self.name}: unexpected quantifier " +
-          "character '#{rc}', expected '*', '+', '}', or 0-9"
       end
-    end
-
-    if read_start and not read_end
-      raise "#{self.name}: premature end of quantifier at '#{rc}'."
-    end
-
-    # Apparently the standard Regexp allows these through, so do the same.
-    #if read_start and read_end and (not have_min and not have_max)
-    #  raise "#{self.name}: empty repetition quantifier."
-    #end
-
-    group
+      group[:quantifier] = t
+    end; group
   end
 
-  # Recompiles the text of the regex using the metadata collected by parse.
-  # There are three types of "nodes" in given groups tree, :c for copied (pass
-  # thru) character runs, :a for aliases, and finally :g for any grouped
-  # expressions with quantifiers. The output of this method is a string that
-  # is suitable for passing to #new of the standard Regexp class.
-  def self.compile(groups, more_max = DEFAULT_MORE_MAX)
+  # Compiles the output of the parse method into a new regular expression,
+  # expanding all quantified grouped expressions.
+  def self.compile(tree, more_max)
     out = ''
-    groups.each do |g|
-      if g.has_key?(:c)
-        exp = g[:c]
-        out << exp
+    tree.each do |node|
+      if node.has_key?(:copy)
+        node[:copy].each {|t| out << t}
 
-      elsif g.has_key?(:a)
-        exp = self.compile(g[:a], more_max)
+      elsif node.has_key?(:alias)
+        exp = ''
+        exp << ('(?<' + node[:name] + '>') if self.name_groups?
+        exp << self.compile(node[:alias], more_max)
+        exp << ')' if self.name_groups?
         out << exp
 
       else
-        exp = "(#{self.compile(g[:g], more_max)})"
-        if g[:m]
-          min = g[:m].to_i
-          if min and min > 0
-            min.times {|i| out << exp }
+        exp = node[:open] + self.compile(node[:group], more_max) + ')'
+
+        if node[:min]
+          if node[:min] > 0
+            node[:min].times {|i| out << exp}
           end
 
-          if g[:M]
-            if g[:M] == :plus or g[:M] == :star
-              max = more_max
-            else
-              max = g[:M].to_i
-            end
-
-            if max and max > 0
-              (max - min).times {|i| out << exp << '?' }
-            end
+          node[:max] = more_max if node[:max] == :more
+          if node[:max] and node[:max] > 0
+            (node[:max] - node[:min]).times {|i| out << exp << '?'}
           end
         else
           out << exp
         end
       end
-    end
-    out
+    end; out
   end
 
-  # Aliases, for lack of a better name at the moment
   @@aliases     = {}
   @@alias_stack = []
+
   @@aliasing_on = false
+  @@name_groups = false
 
   # Enable/disable aliasing support in the parser.
   def self.aliasing(state = nil)
     @@aliasing_on = state unless state.nil?
   end
 
-  # Returns a true if aliasing is enabled, false otherwise.
+  # Returns true if aliasing is enabled, false otherwise.
   def self.aliasing?
     @@aliasing_on
+  end
+
+  # Enable/disable alias group names on compile (ruby >= 1.9 only)
+  def self.name_groups(state = nil)
+    raise "Alias group names requires ruby 1.9 or later" unless
+      RUBY_VERSION >= '1.9'
+
+    @@name_groups = state unless state.nil?
+  end
+
+  # Returns a true if aliases will be wrapped in named groups (ruby >= 1.9)
+  def self.name_groups?
+    @@name_groups
   end
 
   # Add, delete, get one, or get all aliases, depending on given arguments.
   # When called with a name and a value, a new alias is set, or an existing
   # one overwritten. The special value ':delete' is used to do just that.
   # Without a value, this method will return the value associated with the
-  # named alias, if one exists, else nil. The special name ':*' will return
-  # all defined aliases as a hash.
+  # named alias, if one exists, else t return nil. The special name ':*'
+  # will return all defined aliases as a hash.
   def self.alias(name, value = nil)
     return unless name
     if value
       if value == :delete
         @@aliases[name.to_s] = nil
       else
-        @@aliases[name.to_s] = value.to_s
+        value = value.is_a?(Regexp) ? value.source : value
+        @@aliases[name.to_s] = Regexp::Lexer.scan(value)
       end
     else
       if name == :*
@@ -361,31 +288,20 @@ module MetaRegexp
     end
   end
 
-  # Alias parsing and expansion method. This method is called by parse upon
-  # encountering an at sign (@) to read the following characters and if they
-  # match a named alias, replace with the definition of that alias, possibly
-  # containing aliases as well. Grouped expressions inside aliases are also
-  # parsed and expanded recursively. Returns a sub-tree (an array of hashes.)
-  def self._alias(input)
-    name = ''
-    while input[0] and ALIAS_CHARS.include?(input[0].chr) do
-      name << input.slice!(/./)
+  # Alias resolution method. Called by parse for tokens with an at sign (@)
+  # that match a defined alias. Since aliases can contain sub-aliases, this
+  # calls the parse method to recursively resolve those as well. Returns a
+  # sub-tree (an array of hashes) that the compile method expands.
+  def self.resolve(name)
+    if @@alias_stack.include?(name)
+      raise ArgumentError,
+        "#{self.name}: circular alias reference detected (@#{name}.)"
     end
 
-    if @@aliases.has_key?(name)
-      if @@alias_stack.include?(name)
-        raise ArgumentError,
-          "#{self.name}: circular alias reference detected (@#{name}.)"
-      end
+    @@alias_stack << name
+    sub = self.parse( @@aliases[name].dup ) # dup, it gets sliced
+    @@alias_stack.pop
 
-      @@alias_stack << name
-      sub = self.parse( @@aliases[name].to_s.dup ) # dup, it gets sliced
-      @@alias_stack.pop
-
-      sub
-    else
-      [{:c => "@#{name}"}] # copy thru, as a sub-tree
-    end
+    sub
   end
-
-end # module MetaRegexp
+end
