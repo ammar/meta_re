@@ -1,12 +1,6 @@
 = MetaRegexp
 
- This project has been revived and rewriten using regexp_parser, now that its
- scanner and lexer are fairly stable and usable. All functionality described
- below works fully.
- 
- Note, however, since regexp_parser has not been published as a gem yet, using
- meta_re requires regexp_parser to be downloaded, and included or installed into
- the load path. Once regexp_parser gets released as a gem, so will this.
+  Note: this project has not been released as a gem, but might be someday.
 
 == What is it
 A regular expression "pre-processor" that performs the  following
@@ -72,6 +66,22 @@ the desired capture patterns multiple times. In addition to not being DRY,
 this approach makes the resulting expressions harder to edit and read.
 
 
+=== Notes
+  * The "or more" quantifiers, zero or more (*), and one or more (+) use a
+    default value of 12 for the maximum number of repetitions. A different
+    value can be specified as the second argument to #new of MetaRegexp.
+
+  * To avoid over expansion with * and +, use the interval (a.k.a range)
+    quantifier ({min,max}) for repeating groups.
+
+  * Only greedy and reluctant (lazy) quantifiers are supported and tested
+    so far.
+
+  * Possible matches that do not occur appear as nil values in the captures
+    array. See the MatchData class in meta_re.rb for more info and ways to
+    deal with these.
+
+
 == An Example
 Here's a  more elaborate example, this time for matching HTML tags. It is
 somewhat simplified in terms of the tag and attribute names to make it eaiser
@@ -109,22 +119,7 @@ Now with MetaRegexp:
   ]
 
 The nil values that appear at the end are for possible matches that did not
-occur. See the following notes for more on this.
-
-=== Notes
-  * The "or more" quantifiers, zero or more (*), and one or more (+) use a
-    default value of 12 for the maximum number of repetitions. A different
-    value can be specified as the second argument to #new of MetaRegexp.
-
-  * To avoid over expansion with * and +, use the interval (or range)
-    quantifier ({min,max}) for repeating groups.
-
-  * Only greedy quantifiers are supported and tested so far.
-
-  * Possible matches that do not occur appear as nil values in the captures
-    array. See the MatchData class in meta_re.rb for more info and ways to
-    deal with these.
-
+occur. See the notes (above) for more on this.
 
 == Aliases
 Aliases are like macros, a way to define named regular expression patterns that
@@ -167,7 +162,7 @@ use the same name as the alias. To enable named alias groups use:
 
   MetaRegexp.name_groups true
 
-  >> MR.new '@scheme'
+  >> MetaRegexp.new '@scheme'
   => /(?<scheme>https?|ftps?)/
 
 Now matches for that alias can be accessed by name from the match data.
