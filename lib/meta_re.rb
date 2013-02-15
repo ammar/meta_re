@@ -30,8 +30,8 @@ module MetaRegexp
     end
   end
 
-  # A wrapper around ::MatchData that adds a few methods to 
-  # Due to the fact that $~ has local scope, 
+  # A wrapper around ::MatchData that adds a couple of methods that help with
+  # accessing matches from an expanded repeated expression.
   class MatchData < DelegateClass(::MatchData)
     def initialize(match_data)
       super(match_data) # hook up delegate
@@ -48,7 +48,7 @@ module MetaRegexp
     # expression did not match. In some situations the nil values will be useful
     # and meaningful, in other situations they are not. Most probably, the more
     # common of the two cases is to want the nil values removed, so it is set
-    # as the default. 
+    # as the default.
     #
     # The optional filter block can be used to perform additional removals of
     # unwanted matches from the list returned by captures. The given block, if
@@ -118,7 +118,10 @@ module MetaRegexp
 
   private
 
-  GROUP_TOKENS  = [:capture, :passive, :atomic, :options]
+  GROUP_TYPES   = [:group, :assertion]
+  GROUP_TOKENS  = [:capture, :passive, :atomic, :options, :named,
+                   :lookahead, :nlookahead, :lookbehind, :nlookbehind]
+
   ZERO_OR_ONE   = [:zero_or_one, :zero_or_one_reluctant, :zero_or_one_possessive]
   ZERO_OR_MORE  = [:zero_or_more, :zero_or_more_reluctant, :zero_or_more_possessive]
   ONE_OR_MORE   = [:one_or_more, :one_or_more_reluctant, :one_or_more_possessive]
@@ -140,7 +143,7 @@ module MetaRegexp
     in_group = (d == 0 ? false : true)
 
     while tokens[0] and (t = tokens.slice!(0))
-      if t.type == :group and GROUP_TOKENS.include?(t.token)
+      if GROUP_TYPES.include?(t.type) and GROUP_TOKENS.include?(t.token)
         group = { :open => t.text, :group => self.parse(tokens, d+1) }
         tree << quantify(tokens, group)
 
@@ -163,7 +166,7 @@ module MetaRegexp
 
       else
         copy = [t.text]
-        while tokens[0] and not tokens[0].type == :group and not
+        while tokens[0] and not GROUP_TYPES.include?(tokens[0].type) and not
           tokens[0].text.include?('@')
             copy << tokens.slice!(0).text
         end
@@ -233,6 +236,11 @@ module MetaRegexp
         end
       end
     end; out
+  end
+
+  def self.expand(re, more_max = DEFAULT_MORE_MAX)
+    tree = MetaRegexp.parse(Regexp::Lexer.scan(re, "ruby/#{RUBY_VERSION}"))
+    MetaRegexp.compile(tree, more_max)
   end
 
   @@aliases     = {}

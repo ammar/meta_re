@@ -16,6 +16,37 @@ class TestMetaRegexp < Test::Unit::TestCase
     assert_equal('(groups) (without) (quantifiers)', re.source)
   end
 
+  # #expand returns a string
+  def test_expand_to_string
+    assert_kind_of(::String, MetaRegexp.expand(/([a-z]){1,4}/))
+    assert_equal("([a-z])([a-z])?([a-z])?([a-z])?",
+                 MetaRegexp.expand(/([a-z]){1,4}/))
+  end
+
+  # Recognizes and expands named groups
+  def test_parse_correctly_handles_named_groups
+    assert_equal('(?<name>[a-z]+)(?<name>[a-z]+)?(?<name>[a-z]+)?',
+                 MetaRegexp.new(/(?<name>[a-z]+){1,3}/).source)
+
+    assert_equal("(?'name'[a-z]+)(?'name'[a-z]+)?(?'name'[a-z]+)?",
+                 MetaRegexp.new(/(?'name'[a-z]+){1,3}/).source)
+  end
+
+  # Recognizes and expands assertions
+  def test_parse_correctly_handles_assertions
+    assert_equal('ab?(?=[a-z]+)(?=[a-z]+)?cd+',
+                 MetaRegexp.new(/ab?(?=[a-z]+){1,2}cd+/).source)
+
+    assert_equal('ab?(?![a-z]+)(?![a-z]+)?cd+',
+                 MetaRegexp.new(/ab?(?![a-z]+){1,2}cd+/).source)
+
+    assert_equal('ab?(?<=[a-z])(?<=[a-z])?cd+',
+                 MetaRegexp.new(/ab?(?<=[a-z]){1,2}cd+/).source)
+
+    assert_equal('ab?(?<![a-z])(?<![a-z])?cd+',
+                 MetaRegexp.new(/ab?(?<![a-z]){1,2}cd+/).source)
+  end
+
   # ?: pass thru
   def test_parse_passes_optional_groups_as_is
     re = MetaRegexp.new(/ruby (has)? many (gems)?/)
@@ -140,7 +171,7 @@ class TestMetaRegexp < Test::Unit::TestCase
     re = MetaRegexp.new('^(\d{3}\s*)+$')
     md = re.match("123 234 345 456")
 
-    assert_equal(md.captures, md.filter(false)) 
+    assert_equal(md.captures, md.filter(false))
   end
 
   def test_filter_with_block_only
